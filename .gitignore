@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Local runtime data & ONNX model weights (kept out of Git for clean MIT compliance)
+data/
+!data/.gitkeep
+models/
+!models/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+*.onnx
+*.npy
+
+# Environment variables
+.env
+.env.local
+
+# Frontend build artifacts
+web_pwa/node_modules/
+web_pwa/.next/
+web_pwa/out/
+
+# macOS
+.DS_Store

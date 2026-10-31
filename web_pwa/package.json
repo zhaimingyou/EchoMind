@@ -1,0 +1,10 @@
+{
+  "name": "echomind-web-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Responsive Web PWA Workbench & Smart Glasses Optical Waveguide HUD Simulator for EchoMind",
+  "scripts": {
+    "dev": "python3 -m http.server 3000",
+    "start": "python3 -m http.server 3000"
+  }
+}

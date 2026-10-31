@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EchoMind — 个人数字第二大脑 & 智能眼镜记忆中枢</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .hud-glass {
+      background: linear-gradient(135deg, rgba(6, 40, 20, 0.92), rgba(2, 20, 10, 0.96));
+      border: 1px solid rgba(52, 211, 153, 0.45);
+      box-shadow: 0 0 24px rgba(16, 185, 129, 0.2), inset 0 0 15px rgba(16, 185, 129, 0.1);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .hud-text {
+      color: #34d399;
+      text-shadow: 0 0 8px rgba(52, 211, 153, 0.65);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+  <!-- Top Header & Smart Glasses Monochromatic Green Micro-LED HUD Simulator -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col lg:flex-row items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold text-xl">
+          E
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-bold tracking-tight text-white">EchoMind</h1>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">v0.1 MVP · Pure CPU</span>
+          </div>
+          <p class="text-xs text-slate-400">开源全天候语音记忆中枢 · 兼容极米记得 (MemoMind) / Omi / Frame / Plaud</p>
+        </div>
+      </div>
+
+      <!-- Optical Waveguide Monochromatic Green HUD Simulator -->
+      <div class="hud-glass rounded-xl px-4 py-2.5 w-full lg:w-[460px] flex items-center justify-between">
+        <div class="truncate pr-2">
+          <div class="text-[10px] uppercase tracking-wider text-emerald-400/70 flex items-center gap-1.5">
+            <span id="hud-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Optical Waveguide HUD (Micro-LED 40-Char)</span>
+          </div>
+          <div id="hud-line" class="hud-text text-sm font-medium truncate mt-0.5">
+            [HUD 就绪] 等待随身麦克风或智能眼镜推流...
+          </div>
+        </div>
+        <span id="vp-badge" class="text-[11px] px-2 py-0.5 rounded bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 shrink-0">
+          声纹检测中
+        </span>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex flex-wrap items-center gap-2">
+        <button onclick="enrollHostDemo()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium border border-slate-700 transition">
+          🎙️ 注册主人声纹
+        </button>
+        <button id="btn-mic" onclick="toggleMicStream()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition">
+          ● 开启蓝牙/麦克风伴随
+        </button>
+        <button onclick="flushEpisode()" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
+          ⚡ 立即闭合生成卡片
+        </button>
+        <button onclick="seedDemo()" class="px-3 py-1.5 rounded-lg bg-amber-600/90 hover:bg-amber-500 text-white text-xs font-semibold transition">
+          ✨ 一键注入极米+Mem0演示数据
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+    <!-- Live Utterance Injector & Buffer Bar -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+      <div class="flex flex-col md:flex-row items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-sm font-medium text-slate-300">
+          <span>💬 实时口语模拟器（模拟佩戴眼镜/胸针说话）：</span>
+        </div>
+        <div class="flex flex-1 w-full gap-2">
+          <select id="sim-role" class="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
+            <option value="HOST">[HOST] 我（设备主人）</option>
+            <option value="GUEST_1">[GUEST_1] 对话人 A</option>
+            <option value="GUEST_2">[GUEST_2] 对话人 B</option>
+          </select>
+          <select id="sim-emotion" class="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
+            <option value="NEUTRAL">😐 平静 (NEUTRAL)</option>
+            <option value="HAPPY">😄 高兴 (HAPPY)</option>
+            <option value="SAD">😔 叹气/低落 (SAD)</option>
+          </select>
+          <input id="sim-text" type="text" placeholder="输入一句话，例如：下周五之前必须把开源插件文档写完，另外真想买副智能眼镜..." class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-emerald-500" />
+          <button onclick="sendSimulatedUtterance()" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white shrink-0">
+            发送入缓冲池
+          </button>
+        </div>
+      </div>
+      <div id="buffer-list" class="mt-3 text-xs text-slate-400 space-y-1 max-h-28 overflow-y-auto"></div>
+    </section>
+
+    <!-- 4-Column Dashboard Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- Column 1: MemoMind-style Episode Cards (5 cols) -->
+      <section class="lg:col-span-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            📇 情景记忆卡片流 (Episodes)
+          </h2>
+          <input id="search-q" oninput="loadDashboard()" type="text" placeholder="混合检索 (BM25 + 向量)..." class="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1 text-xs text-slate-200 w-48" />
+        </div>
+        <div id="episodes-container" class="space-y-3"></div>
+      </section>
+
+      <!-- Column 2: Action Items (To-Do) & Wishlists/Clues (4 cols) -->
+      <section class="lg:col-span-4 space-y-6">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <h2 class="text-sm font-bold text-emerald-400 flex items-center justify-between">
+            <span>✅ 自动捕获承诺与待办 (Action Items)</span>
+            <span id="todos-count" class="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">0</span>
+          </h2>
+          <div id="todos-container" class="space-y-2.5"></div>
+        </div>
+
+        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <h2 class="text-sm font-bold text-amber-400 flex items-center justify-between">
+            <span>✨ 随口愿望清单与灵感线索 (Wishlist & Clues)</span>
+            <span id="clues-count" class="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-300">0</span>
+          </h2>
+          <div id="clues-container" class="space-y-2.5"></div>
+        </div>
+      </section>
+
+      <!-- Column 3: Mem0-style Dynamic Entity Graph & Morning/Evening Memo (3 cols) -->
+      <section class="lg:col-span-3 space-y-6">
+        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <h2 class="text-sm font-bold text-indigo-400 flex items-center justify-between">
+            <span>🧠 动态认知图谱 (Mem0 Facts)</span>
+            <span id="facts-count" class="text-xs px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300">0</span>
+          </h2>
+          <div id="facts-container" class="space-y-2 text-xs"></div>
+        </div>
+
+        <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h2 class="text-sm font-bold text-rose-400">🌅 早晚安主动 Memo</h2>
+            <div class="flex gap-1">
+              <button onclick="generateMemo('MORNING_BRIEF')" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px]">早安</button>
+              <button onclick="generateMemo('EVENING_REVIEW')" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px]">晚安</button>
+            </div>
+          </div>
+          <div id="memos-container" class="space-y-2 text-xs text-slate-300 max-h-80 overflow-y-auto whitespace-pre-wrap"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    let ws = null;
+    let audioCtx = null;
+    let mediaStream = null;
+
+    function connectWebSocket() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/api/v1/stream/audio`);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'handshake', device_id: 'web_pwa_hud', sample_rate: 16000 }));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.hud_display) {
+            document.getElementById('hud-line').textContent = data.hud_display;
+          }
+          if (data.event === 'realtime_utterance' || data.event === 'episode_created') {
+            loadDashboard();
+          }
+        } catch (e) {}
+      };
+    }
+
+    async function loadDashboard() {
+      const q = document.getElementById('search-q').value || '';
+      const [epRes, bufRes, actRes, clueRes, factRes, memoRes, vpRes] = await Promise.all([
+        fetch(`/api/v1/episodes?q=${encodeURIComponent(q)}`).then(r => r.json()),
+        fetch('/api/v1/utterances/buffer').then(r => r.json()),
+        fetch('/api/v1/actions').then(r => r.json()),
+        fetch('/api/v1/clues').then(r => r.json()),
+        fetch('/api/v1/facts').then(r => r.json()),
+        fetch('/api/v1/memos').then(r => r.json()),
+        fetch('/api/v1/voiceprint/status').then(r => r.json())
+      ]);
+
+      // Voiceprint badge
+      const vpBadge = document.getElementById('vp-badge');
+      vpBadge.textContent = vpRes.enrolled ? '声纹已锚定 [HOST]' : '未注册声纹';
+
+      // Buffer
+      const bufEl = document.getElementById('buffer-list');
+      if (bufRes.utterances.length === 0) {
+        bufEl.innerHTML = '<div class="text-slate-500">当前缓冲池为空（说话后将在此实时累积，满 3 分钟静默或点击“立即闭合”生成卡片）</div>';
+      } else {
+        bufEl.innerHTML = bufRes.utterances.map(u =>
+          `<div class="flex items-center gap-2 py-0.5"><span class="px-1.5 py-0.2 rounded bg-slate-800 text-emerald-400 font-mono">[${u.speaker_role}]</span><span class="text-slate-400">[${u.emotion_tag}]</span><span class="text-slate-200">${u.text_content}</span></div>`
+        ).join('');
+      }
+
+      // Episodes
+      const epEl = document.getElementById('episodes-container');
+      if (epRes.episodes.length === 0) {
+        epEl.innerHTML = '<div class="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-xs text-slate-400 text-center">暂无记忆卡片，点击右上角「✨ 一键注入极米+Mem0演示数据」立即体验！</div>';
+      } else {
+        epEl.innerHTML = epRes.episodes.map(ep => `
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2 hover:border-slate-700 transition">
+            <div class="flex items-center justify-between">
+              <span class="text-xs px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">${ep.category}</span>
+              <span class="text-xs text-amber-400">${'★'.repeat(ep.importance_score)}</span>
+            </div>
+            <h3 class="text-sm font-bold text-white">《${ep.title}》</h3>
+            <div class="text-xs text-slate-300 whitespace-pre-line leading-relaxed">${ep.summary}</div>
+            <details class="text-xs text-slate-400 pt-1 border-t border-slate-800/80">
+              <summary class="cursor-pointer hover:text-slate-200">查看原始声纹对话流 (${(ep.utterances || []).length} 句 | HOST占比 ${(ep.host_word_ratio * 100).toFixed(0)}%)</summary>
+              <div class="mt-2 space-y-1 pl-2 border-l-2 border-slate-800">
+                ${(ep.utterances || []).map(u => `<div><strong class="text-emerald-400">[${u.speaker_role}]</strong> (${u.emotion_tag}): ${u.text_content}</div>`).join('')}
+              </div>
+            </details>
+          </div>
+        `).join('');
+      }
+
+      // Todos
+      document.getElementById('todos-count').textContent = actRes.count;
+      document.getElementById('todos-container').innerHTML = actRes.action_items.map(t => `
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-start gap-2.5 text-xs">
+          <input type="checkbox" ${t.status === 'DONE' ? 'checked' : ''} onchange="toggleTodo('${t.id}', this.checked)" class="mt-1 accent-emerald-500" />
+          <div class="flex-1">
+            <div class="${t.status === 'DONE' ? 'line-through text-slate-500' : 'text-slate-100 font-medium'}">${t.content}</div>
+            <div class="text-[11px] text-slate-400 mt-0.5">责任人: ${t.assignee} ${t.due_date ? '| 截止: ' + t.due_date : ''}</div>
+            ${t.source_quote ? `<div class="text-[11px] text-slate-500 italic mt-0.5">原话: “${t.source_quote}”</div>` : ''}
+          </div>
+        </div>
+      `).join('') || '<div class="text-xs text-slate-500">暂无待办事项</div>';
+
+      // Clues & Wishlists
+      document.getElementById('clues-count').textContent = clueRes.count;
+      document.getElementById('clues-container').innerHTML = clueRes.clues.map(c => `
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">${c.clue_type}</span>
+            <button onclick="convertClue('${c.id}')" class="text-[11px] text-emerald-400 hover:underline">转为待办 →</button>
+          </div>
+          <div class="text-slate-200 font-medium">${c.content}</div>
+          <div class="text-[11px] text-slate-500 italic">原话: “${c.source_quote}”</div>
+        </div>
+      `).join('') || '<div class="text-xs text-slate-500">暂无愿望清单或线索</div>';
+
+      // Semantic Facts
+      document.getElementById('facts-count').textContent = factRes.count;
+      document.getElementById('facts-container').innerHTML = factRes.facts.map(f => `
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-0.5">
+          <div class="font-semibold text-indigo-300">${f.subject} · <span class="text-slate-400">${f.predicate}</span></div>
+          <div class="text-slate-100 font-bold">${f.object_value}</div>
+          ${f.previous_value ? `<div class="text-[11px] text-amber-400/90">↺ 已由旧值「${f.previous_value}」自动消解更新</div>` : ''}
+        </div>
+      `).join('') || '<div class="text-xs text-slate-500">暂无沉淀事实</div>';
+
+      // Memos
+      document.getElementById('memos-container').innerHTML = memoRes.memos.map(m => `
+        <div class="p-3 rounded-xl bg-slate-950 border border-slate-800">${m.content_markdown}</div>
+      `).join('') || '<div class="text-xs text-slate-500">点击上方「早安/晚安」生成主动推进简报</div>';
+    }
+
+    async function sendSimulatedUtterance() {
+      const textInput = document.getElementById('sim-text');
+      const text = textInput.value.trim();
+      if (!text) return;
+      const role = document.getElementById('sim-role').value;
+      const emotion = document.getElementById('sim-emotion').value;
+      await fetch('/api/v1/utterances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text_content: text,
+          speaker_role: role,
+          emotion_tag: emotion,
+          acoustic_event: emotion === 'HAPPY' ? 'LAUGHTER' : (emotion === 'SAD' ? 'SIGH' : 'NONE'),
+          device_id: 'web_simulator'
+        })
+      });
+      textInput.value = '';
+      await loadDashboard();
+    }
+
+    async function flushEpisode() {
+      await fetch('/api/v1/episodes/flush', { method: 'POST' });
+      await loadDashboard();
+    }
+
+    async function seedDemo() {
+      document.getElementById('hud-line').textContent = '[HUD] 正在注入极米记得 + Mem0 冲突消解演示数据...';
+      await fetch('/api/v1/demo/seed', { method: 'POST' });
+      await loadDashboard();
+    }
+
+    async function enrollHostDemo() {
+      await fetch('/api/v1/voiceprint/enroll', { method: 'POST' });
+      document.getElementById('hud-line').textContent = '✓ 主人 192维 3D-Speaker 声纹特征已锚定 [HOST]';
+      await loadDashboard();
+    }
+
+    async function toggleTodo(id, checked) {
+      await fetch(`/api/v1/actions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: checked ? 'DONE' : 'PENDING' })
+      });
+      await loadDashboard();
+    }
+
+    async function convertClue(id) {
+      await fetch(`/api/v1/clues/${id}/convert-to-todo`, { method: 'POST' });
+      await loadDashboard();
+    }
+
+    async function generateMemo(type) {
+      await fetch(`/api/v1/memos/generate?memo_type=${type}`, { method: 'POST' });
+      await loadDashboard();
+    }
+
+    async function toggleMicStream() {
+      const btn = document.getElementById('btn-mic');
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+        if (audioCtx) audioCtx.close();
+        btn.textContent = '● 开启蓝牙/麦克风伴随';
+        btn.className = 'px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition';
+        return;
+      }
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 } });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = audioCtx.createMediaStreamSource(mediaStream);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+        processor.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          const int16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+          }
+          ws.send(int16.buffer);
+        };
+        btn.textContent = '⏹ 停止伴随拾音 (推流中...)';
+        btn.className = 'px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition animate-pulse';
+        document.getElementById('hud-line').textContent = '[HUD 伴随拾音中] 静音帧零落盘，检测到有效语音自动转写...';
+      } catch (err) {
+        alert('无法访问麦克风，请检查浏览器权限或使用下方文字模拟器测试。');
+      }
+    }
+
+    connectWebSocket();
+    loadDashboard();
+  </script>
+</body>
+</html>
