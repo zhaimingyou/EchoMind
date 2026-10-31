@@ -1,5 +1,7 @@
 # EchoMind
 
+简体中文 | [English](README.en.md)
+
 EchoMind 是一个面向 AI 眼镜和随身录音设备的开源个人记忆项目，希望把日常对话整理成以后找得到、用得上的记录。
 
 项目的一个参考是[极米记得（MemoMind）](https://www.memo-mind.com/pages/memomind-one)。它将眼镜与 App 结合起来，提供录音摘要、字幕等功能，配套的记忆服务还能从对话中整理待办、愿望，并找回过去的记录。EchoMind 想沿着这个方向，逐步做出一个可以自己部署、接入不同设备的开源方案。

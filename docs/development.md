@@ -1,5 +1,7 @@
 # 开发与接入
 
+简体中文 | [English](development.en.md)
+
 先按 [README](../README.md#本地运行) 安装并启动项目。以下命令均在项目根目录执行，使用已激活的虚拟环境。
 
 后端使用 Python、FastAPI 和 SQLite。API 文档在 <http://127.0.0.1:8000/docs>，运行数据默认保存在 `data/`，导出的 Markdown 笔记在 `data/obsidian_vault/`。
