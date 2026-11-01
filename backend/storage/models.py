@@ -1,4 +1,4 @@
-"""Data models for EchoMind's 6 core tables (SQLite + FTS5 + metadata_json extensibility)."""
+"""Data models for EchoMind's core tables, durable effects queue, and plugin KV store."""
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -101,3 +101,22 @@ class DailyMemo(_ModelBase):
     content_markdown: str
     id: str = field(default_factory=lambda: f"memo_{uuid.uuid4().hex[:10]}")
     created_at: str = field(default_factory=_utc_now_iso)
+
+
+@dataclass
+class DurableEffect(_ModelBase):
+    """Durable side-effect queue item inspired by dsh-superagent Effects.
+
+    Coalesces by `(kind, effect_key)` while status is 'PENDING' and retries
+    with exponential backoff on transient failures.
+    """
+
+    kind: str
+    effect_key: str
+    payload_json: Dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: f"eff_{uuid.uuid4().hex[:10]}")
+    status: str = "PENDING"  # PENDING, DONE, FAILED
+    attempts: int = 0
+    next_run_at: str = field(default_factory=_utc_now_iso)
+    last_error: Optional[str] = None
+    updated_at: str = field(default_factory=_utc_now_iso)

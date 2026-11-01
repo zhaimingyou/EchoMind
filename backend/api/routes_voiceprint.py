@@ -1,30 +1,31 @@
-"""REST API routes for Host Voiceprint Registration, Plugins, and HUD Event Feed."""
+"""REST API routes for Host Voiceprint Registration, Plugins, and Micro-Kernel Introspection."""
 import io
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, File, UploadFile
 import numpy as np
 import soundfile as sf
-from backend.audio_engine.speaker_id import get_speaker_identifier
 from backend.core.event_bus import event_bus
 from backend.core.plugin_manager import plugin_manager
+from backend.core.registry import registry
+from backend.core.runtime import runtime_manager
 
-router = APIRouter(prefix="/api/v1", tags=["Voiceprint, Plugins & HUD"])
+router = APIRouter(prefix="/api/v1", tags=["Voiceprint, Plugins & Micro-Kernel"])
 
 
 @router.get("/voiceprint/status")
 def get_voiceprint_status() -> Dict[str, Any]:
-    identifier = get_speaker_identifier()
+    identifier = registry.get_speaker()
     return {
         "enrolled": identifier.has_host_voiceprint(),
-        "voiceprint_path": str(identifier.voiceprint_path),
-        "host_threshold": identifier.host_threshold,
+        "voiceprint_path": str(getattr(identifier, "voiceprint_path", "")),
+        "host_threshold": getattr(identifier, "host_threshold", 0.65),
     }
 
 
 @router.post("/voiceprint/enroll")
 async def enroll_voiceprint(file: Optional[UploadFile] = File(default=None)) -> Dict[str, Any]:
     """Enroll the owner's `[HOST]` voiceprint via uploaded WAV or synthetic demo signal."""
-    identifier = get_speaker_identifier()
+    identifier = registry.get_speaker()
     if file is not None:
         raw_bytes = await file.read()
         samples, sr = sf.read(io.BytesIO(raw_bytes), dtype="float32")
@@ -39,7 +40,7 @@ async def enroll_voiceprint(file: Optional[UploadFile] = File(default=None)) -> 
     return {
         "status": "enrolled",
         "embedding_dim": int(len(emb)),
-        "voiceprint_path": str(identifier.voiceprint_path),
+        "voiceprint_path": str(getattr(identifier, "voiceprint_path", "")),
     }
 
 
@@ -49,3 +50,15 @@ def list_active_plugins() -> Dict[str, Any]:
         "plugins": plugin_manager.list_plugins(),
         "recent_events": event_bus.get_recent_events(limit=15),
     }
+
+
+@router.get("/system/kernel")
+def inspect_microkernel_status() -> Dict[str, Any]:
+    """Return attention-first micro-kernel health, active providers, plugins, and durable effects."""
+    return runtime_manager.get_kernel_status()
+
+
+@router.post("/system/pass")
+async def trigger_maintenance_pass() -> Dict[str, Any]:
+    """Manually trigger one atomic RuntimeManager pass (due effects, silence segmentation, audio inbox)."""
+    return await runtime_manager.run_pass()

@@ -1,12 +1,13 @@
 """Cognitive Memory Extractor (LiteLLM + Intelligent Local Heuristic Fallback).
 
 Extracts MemoMind-style episode cards, action items with source quotes,
-wishlists/clues, and Mem0-style fact updates from a list of Utterances.
+wishlists/clues, Mem0-style fact updates, and custom domain metadata from a list of Utterances.
 """
 from datetime import datetime, timedelta, timezone
 import logging
+from pathlib import Path
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 from backend.config import settings
 from backend.memory_core.fact_resolver import FactResolver, get_fact_resolver
 from backend.memory_core.prompts import EPISODE_EXTRACTION_SYSTEM_PROMPT
@@ -22,10 +23,38 @@ logger = logging.getLogger("echomind.extractor")
 
 
 class CognitiveExtractor:
-    """Extracts structured episodic memory, todos, wishlists, and semantic facts."""
+    """Extracts structured episodic memory, todos, wishlists, semantic facts, and domain metadata."""
 
     def __init__(self, fact_resolver: Optional[FactResolver] = None) -> None:
         self.fact_resolver = fact_resolver or get_fact_resolver()
+        self._custom_instructions: Dict[str, str] = {}
+
+    def register_custom_instruction(self, name: str, instruction: str) -> None:
+        """Register additional vertical-domain extraction instructions (e.g., medical, sales CRM)."""
+        self._custom_instructions[name] = instruction.strip()
+
+    def unregister_custom_instruction(self, name: str) -> None:
+        self._custom_instructions.pop(name, None)
+
+    def get_effective_system_prompt(self, existing_facts_block: str) -> str:
+        """Build the system prompt combining base template and any custom domain instructions."""
+        base = EPISODE_EXTRACTION_SYSTEM_PROMPT.format(
+            current_time=datetime.now(timezone.utc).isoformat(),
+            existing_facts_block=existing_facts_block,
+        )
+        extras: List[str] = []
+        if settings.custom_extraction_prompt:
+            extras.append(settings.custom_extraction_prompt.strip())
+        if settings.custom_extraction_prompt_file:
+            p = Path(settings.custom_extraction_prompt_file)
+            if p.exists():
+                extras.append(p.read_text(encoding="utf-8").strip())
+        extras.extend(self._custom_instructions.values())
+
+        if extras:
+            joined = "\n\n".join(extras)
+            base = f"{base}\n\n## 垂直领域附加提取规则 (Custom Domain Instructions)\n{joined}"
+        return base
 
     def format_dialogue_script(self, utterances: List[Utterance]) -> str:
         lines: List[str] = []
@@ -54,9 +83,8 @@ class CognitiveExtractor:
             try:
                 import litellm
 
-                sys_prompt = EPISODE_EXTRACTION_SYSTEM_PROMPT.format(
-                    current_time=datetime.now(timezone.utc).isoformat(),
-                    existing_facts_block=self.fact_resolver.format_facts_for_prompt(existing_facts),
+                sys_prompt = self.get_effective_system_prompt(
+                    existing_facts_block=self.fact_resolver.format_facts_for_prompt(existing_facts)
                 )
                 script = self.format_dialogue_script(utterances)
                 resp = await litellm.acompletion(
@@ -157,7 +185,6 @@ class CognitiveExtractor:
                 )
                 importance = max(importance, 3)
 
-            # 3. Semantic Fact & Conflict Resolution patterns (e.g., "王总的预算改成了30万" or "王总的报价底线是50万")
             budget_match = re.search(
                 r"([\u4e00-\u9fa5A-Za-z0-9_]{2,8}?)(?:的)?(预算|报价底线|报价|交付周期|偏好)(?:目前是|是|为|改成了|调整为|降到|定在)?([^，。！？,.!?]+)",
                 txt,
@@ -198,6 +225,10 @@ class CognitiveExtractor:
         clean_title = re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]", "", first_sentence)[:10] or "对话记忆卡片"
         summary_md = "### 核心对话纪要（第一人称视角）\n" + "\n".join(summary_bullets[:8])
 
+        custom_meta: Dict[str, str] = {}
+        if self._custom_instructions:
+            custom_meta["active_custom_profiles"] = ",".join(sorted(self._custom_instructions.keys()))
+
         return EpisodeCognitiveResult(
             is_meaningful=len(utterances) > 0,
             title=clean_title,
@@ -207,6 +238,7 @@ class CognitiveExtractor:
             action_items=todos,
             clues_and_wishlists=clues,
             fact_operations=fact_ops,
+            custom_metadata=custom_meta,
         )
 
 

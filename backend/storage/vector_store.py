@@ -1,11 +1,13 @@
-"""Local Hybrid Search Engine (SQLite FTS5 BM25 + CPU Feature Vector RRF).
+"""Local Hybrid Search Engine (SQLite FTS5 BM25 + Pluggable EmbeddingProvider RRF).
 
 Provides zero-config local vector similarity + keyword Reciprocal Rank Fusion (RRF)
-without requiring external GPU or cloud embedding API keys.
+while allowing secondary developers to register custom `EmbeddingProvider` engines
+(e.g., ONNX BGE-small, OpenAI embeddings) via `ProviderRegistry`.
 """
 import hashlib
 import math
 from typing import Dict, List, Optional, Tuple
+from backend.core.interfaces import EmbeddingProvider
 from backend.storage.database import StorageEngine, get_storage
 from backend.storage.models import Episode
 
@@ -32,6 +34,16 @@ def compute_local_text_embedding(text: str, dim: int = 256) -> List[float]:
     return vec
 
 
+class LocalNgramEmbeddingProvider:
+    """Default zero-dependency CPU embedding provider implementing `EmbeddingProvider`."""
+
+    def __init__(self, dim: int = 256) -> None:
+        self.dim = dim
+
+    def embed_text(self, text: str) -> List[float]:
+        return compute_local_text_embedding(text, dim=self.dim)
+
+
 def _dot(a: List[float], b: List[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
 
@@ -39,14 +51,27 @@ def _dot(a: List[float], b: List[float]) -> float:
 class HybridSearchEngine:
     """Combines SQLite FTS5 keyword search with vector cosine similarity via RRF."""
 
-    def __init__(self, storage: Optional[StorageEngine] = None) -> None:
+    def __init__(
+        self,
+        storage: Optional[StorageEngine] = None,
+        embedding_provider: Optional[EmbeddingProvider] = None,
+    ) -> None:
         self.storage = storage or get_storage()
+        self._embedding_provider = embedding_provider
         self._vectors: Dict[str, List[float]] = {}
 
+    @property
+    def embedding_provider(self) -> EmbeddingProvider:
+        if self._embedding_provider is not None:
+            return self._embedding_provider
+        from backend.core.registry import registry
+
+        return registry.get_embedding()
+
     def index_episode(self, ep: Episode, utterances_text: str = "") -> None:
-        """Index an episode into the local vector store."""
+        """Index an episode into the local vector store using the active `EmbeddingProvider`."""
         combined = f"{ep.title} {ep.summary} {utterances_text}"
-        self._vectors[ep.id] = compute_local_text_embedding(combined)
+        self._vectors[ep.id] = self.embedding_provider.embed_text(combined)
 
     def hybrid_search(
         self,
@@ -64,7 +89,7 @@ class HybridSearchEngine:
             fts_hits = [ep for ep in fts_hits if ep.category == category]
 
         all_episodes = self.storage.list_episodes(category=category, limit=200)
-        q_vec = compute_local_text_embedding(query)
+        q_vec = self.embedding_provider.embed_text(query)
 
         vec_scored: List[Tuple[float, Episode]] = []
         for ep in all_episodes:

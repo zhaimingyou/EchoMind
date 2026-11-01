@@ -34,9 +34,29 @@ class Settings:
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 
-    # Pluggable Providers ("sherpa_onnx" or "mock")
+    # Pluggable Providers ("sherpa_onnx", "default", "local_ngram", "rms_energy", or custom)
     asr_provider: str = field(default_factory=lambda: os.getenv("ASR_PROVIDER", "sherpa_onnx"))
     speaker_provider: str = field(default_factory=lambda: os.getenv("SPEAKER_PROVIDER", "sherpa_onnx"))
+    vad_provider: str = field(default_factory=lambda: os.getenv("VAD_PROVIDER", "rms_energy"))
+    extractor_provider: str = field(default_factory=lambda: os.getenv("EXTRACTOR_PROVIDER", "default"))
+    embedding_provider: str = field(default_factory=lambda: os.getenv("EMBEDDING_PROVIDER", "local_ngram"))
+
+    # HUD Attention Budget Policy ("verbose" | "action_only" | "silent_record")
+    # Inspired by dsh-superagent 000-philosophy: "Take as little human attention as possible"
+    hud_attention_policy: str = field(
+        default_factory=lambda: os.getenv("HUD_ATTENTION_POLICY", "verbose")
+    )
+
+    # Background Passes & Runtime Daemon
+    runtime_pass_interval_sec: float = field(
+        default_factory=lambda: float(os.getenv("RUNTIME_PASS_INTERVAL_SEC", "5.0"))
+    )
+    enable_background_passes: bool = field(
+        default_factory=lambda: os.getenv("ENABLE_BACKGROUND_PASSES", "true").lower() == "true"
+    )
+    effect_max_attempts: int = field(
+        default_factory=lambda: int(os.getenv("EFFECT_MAX_ATTEMPTS", "3"))
+    )
 
     # Voiceprint & VAD Parameters
     host_similarity_threshold: float = field(
@@ -69,13 +89,19 @@ class Settings:
         default_factory=lambda: os.getenv("MEETING_BYSTANDER_MODE", "false").lower() == "true"
     )
 
-    # Cognitive LLM Engine
+    # Cognitive LLM Engine & Custom Domain Prompt
     llm_model: str = field(
         default_factory=lambda: os.getenv("LLM_MODEL", "deepseek/deepseek-chat")
     )
     llm_api_key: Optional[str] = field(default_factory=lambda: os.getenv("LLM_API_KEY"))
     llm_api_base: Optional[str] = field(
         default_factory=lambda: os.getenv("LLM_API_BASE", "https://api.deepseek.com/v1")
+    )
+    custom_extraction_prompt: Optional[str] = field(
+        default_factory=lambda: os.getenv("CUSTOM_EXTRACTION_PROMPT") or None
+    )
+    custom_extraction_prompt_file: Optional[str] = field(
+        default_factory=lambda: os.getenv("CUSTOM_EXTRACTION_PROMPT_FILE") or None
     )
 
     # Proactive Daily Memo Schedule

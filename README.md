@@ -47,8 +47,9 @@ python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ## 继续了解
 
 - [开发与接入](docs/development.md)：语音模型、配置、MCP 和测试。
-- [产品设想](specs/spec.md)与[设计文档](specs/design.md)：记录了项目的设计和计划，部分内容尚未实现。
-- [插件示例](plugins/example_hud_logger.py)：尝试扩展记录处理和消息推送。
+- [二次开发与插件 SDK 指南 (Cookbook)](docs/plugin-sdk.md)：前置拦截脱敏、替换底层 Provider、挂载硬件专属路由与受限上下文。
+- [产品设想](specs/spec.md)、[设计文档](specs/design.md)与[任务拆解](specs/tasks.md)：记录了项目的设计和计划。
+- [插件示例](plugins/example_custom_dev_template.py)：展示前置脱敏、扩展字段注入与自定义 API 路由。
 
 如果你也在做 AI 眼镜、随身录音或个人记忆工具，欢迎交流接入方式和实际使用中遇到的问题。
 

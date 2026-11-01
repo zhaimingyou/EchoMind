@@ -78,5 +78,5 @@ web_pwa/          网页工作台
 scripts/          模型下载、声纹注册和流程演示
 ```
 
-插件示例见 [`plugins/example_hud_logger.py`](../plugins/example_hud_logger.py)。设计和计划见 [`specs/`](../specs/)，其中部分内容尚未实现。
+插件与微内核二次开发详见 [二次开发与插件 SDK 指南 (Cookbook)](plugin-sdk.md)，代码示例见 [`plugins/example_custom_dev_template.py`](../plugins/example_custom_dev_template.py) 与 [`plugins/example_hud_logger.py`](../plugins/example_hud_logger.py)。设计和计划见 [`specs/`](../specs/)。
 

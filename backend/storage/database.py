@@ -1,21 +1,34 @@
-"""SQLite (WAL + FTS5) Storage Engine for EchoMind."""
+"""SQLite (WAL + FTS5) Storage Engine for EchoMind.
+
+Includes:
+- 6 core memory tables (utterances, episodes, action_items, clues_and_wishlists, semantic_facts, daily_memos)
+- FTS5 virtual table (`episodes_fts`)
+- `plugin_kv` isolated namespace key-value table for Narrow PluginContext
+- `effects` durable side-effect queue table with key coalescing and backoff retry support
+"""
+from datetime import datetime, timedelta, timezone
 import json
-import sqlite3
 from pathlib import Path
+import sqlite3
 from typing import Any, Dict, List, Optional
 from backend.config import settings
 from backend.storage.models import (
     ActionItem,
     ClueAndWishlist,
     DailyMemo,
+    DurableEffect,
     Episode,
     SemanticFact,
     Utterance,
 )
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class StorageEngine:
-    """Thread-safe SQLite WAL + FTS5 storage layer supporting all 6 core tables."""
+    """Thread-safe SQLite WAL + FTS5 storage layer supporting core memory, plugin KV, and durable effects."""
 
     def __init__(self, db_path: Optional[Path] = None) -> None:
         self.db_path = db_path or settings.db_path
@@ -115,6 +128,29 @@ class StorageEngine:
                     summary,
                     utterances_concat
                 );
+
+                CREATE TABLE IF NOT EXISTS plugin_kv (
+                    plugin_name TEXT NOT NULL,
+                    kv_key TEXT NOT NULL,
+                    value_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (plugin_name, kv_key)
+                );
+
+                CREATE TABLE IF NOT EXISTS effects (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    effect_key TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_run_at TEXT NOT NULL,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_effects_status_due ON effects(status, next_run_at);
+                CREATE INDEX IF NOT EXISTS idx_effects_kind_key ON effects(kind, effect_key);
                 """
             )
 
@@ -266,7 +302,6 @@ class StorageEngine:
             except sqlite3.OperationalError:
                 pass
 
-            # Substring fallback for CJK characters without spaces
             like_pat = f"%{clean_q}%"
             like_rows = conn.execute(
                 """
@@ -496,6 +531,178 @@ class StorageEngine:
         with self._connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [DailyMemo(**dict(r)) for r in rows]
+
+    # --- 7. Plugin Scoped Key-Value Store (Narrow Context) ---
+    def get_plugin_kv(self, plugin_name: str, key: str, default: Any = None) -> Any:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM plugin_kv WHERE plugin_name = ? AND kv_key = ?",
+                (plugin_name, key),
+            ).fetchone()
+        if not row:
+            return default
+        try:
+            return json.loads(row["value_json"])
+        except Exception:
+            return default
+
+    def set_plugin_kv(self, plugin_name: str, key: str, value: Any) -> None:
+        now = _utc_now_iso()
+        val_str = json.dumps(value, ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO plugin_kv (plugin_name, kv_key, value_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(plugin_name, kv_key)
+                DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+                """,
+                (plugin_name, key, val_str, now),
+            )
+
+    def delete_plugin_kv(self, plugin_name: str, key: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM plugin_kv WHERE plugin_name = ? AND kv_key = ?",
+                (plugin_name, key),
+            )
+
+    def list_plugin_kv_keys(self, plugin_name: str) -> List[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT kv_key FROM plugin_kv WHERE plugin_name = ? ORDER BY kv_key ASC",
+                (plugin_name,),
+            ).fetchall()
+        return [r["kv_key"] for r in rows]
+
+    # --- 8. Durable Effects Queue (dsh-superagent Coalescing & Backoff) ---
+    def enqueue_effect(self, kind: str, effect_key: str, payload: Dict[str, Any]) -> DurableEffect:
+        """Enqueue a side-effect. If a PENDING row for `(kind, effect_key)` exists, coalesce its payload."""
+        now = _utc_now_iso()
+        payload_str = json.dumps(payload, ensure_ascii=False)
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM effects WHERE kind = ? AND effect_key = ? AND status = 'PENDING'",
+                (kind, effect_key),
+            ).fetchone()
+            if existing:
+                eff_id = existing["id"]
+                conn.execute(
+                    """
+                    UPDATE effects
+                    SET payload_json = ?, next_run_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (payload_str, now, now, eff_id),
+                )
+                row = conn.execute("SELECT * FROM effects WHERE id = ?", (eff_id,)).fetchone()
+                return self._row_to_effect(row)
+
+            eff = DurableEffect(
+                kind=kind,
+                effect_key=effect_key,
+                payload_json=payload,
+                next_run_at=now,
+                updated_at=now,
+            )
+            conn.execute(
+                """
+                INSERT INTO effects (
+                    id, kind, effect_key, payload_json, status, attempts, next_run_at, last_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    eff.id,
+                    eff.kind,
+                    eff.effect_key,
+                    payload_str,
+                    eff.status,
+                    eff.attempts,
+                    eff.next_run_at,
+                    eff.last_error,
+                    eff.updated_at,
+                ),
+            )
+            return eff
+
+    def list_due_effects(self, now_iso: Optional[str] = None, limit: int = 20) -> List[DurableEffect]:
+        now = now_iso or _utc_now_iso()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM effects
+                WHERE status = 'PENDING' AND next_run_at <= ?
+                ORDER BY next_run_at ASC, updated_at ASC LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+        return [self._row_to_effect(r) for r in rows]
+
+    def mark_effect_done(self, effect_id: str) -> None:
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE effects SET status = 'DONE', updated_at = ? WHERE id = ?",
+                (now, effect_id),
+            )
+
+    def record_effect_failure(
+        self,
+        effect_id: str,
+        error_msg: str,
+        max_attempts: int = 3,
+    ) -> Optional[DurableEffect]:
+        """Increment attempts and apply exponential backoff (2^attempts sec up to 60s), or mark FAILED."""
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM effects WHERE id = ?", (effect_id,)).fetchone()
+            if not row:
+                return None
+            attempts = int(row["attempts"]) + 1
+            if attempts >= max_attempts:
+                status = "FAILED"
+                next_run_iso = row["next_run_at"]
+            else:
+                status = "PENDING"
+                backoff_sec = min(60, 2 ** attempts)
+                next_run_iso = (now_dt + timedelta(seconds=backoff_sec)).isoformat()
+
+            conn.execute(
+                """
+                UPDATE effects
+                SET status = ?, attempts = ?, next_run_at = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, attempts, next_run_iso, error_msg, now_iso, effect_id),
+            )
+            updated = conn.execute("SELECT * FROM effects WHERE id = ?", (effect_id,)).fetchone()
+            return self._row_to_effect(updated) if updated else None
+
+    def list_effects(self, status: Optional[str] = None, limit: int = 50) -> List[DurableEffect]:
+        query = "SELECT * FROM effects WHERE 1=1"
+        params: List[Any] = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_effect(r) for r in rows]
+
+    def _row_to_effect(self, r: sqlite3.Row) -> DurableEffect:
+        return DurableEffect(
+            id=r["id"],
+            kind=r["kind"],
+            effect_key=r["effect_key"],
+            payload_json=json.loads(r["payload_json"] or "{}"),
+            status=r["status"],
+            attempts=int(r["attempts"]),
+            next_run_at=r["next_run_at"],
+            last_error=r["last_error"],
+            updated_at=r["updated_at"],
+        )
 
 
 _default_storage: Optional[StorageEngine] = None

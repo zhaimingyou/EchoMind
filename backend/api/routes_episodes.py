@@ -1,5 +1,5 @@
 """REST API routes for Episodes, Utterances, Hybrid Search, and Daily Memos."""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from backend.core.event_bus import event_bus
@@ -65,7 +65,7 @@ def get_episode_detail(episode_id: str) -> Dict[str, Any]:
 
 @router.post("/utterances")
 async def push_utterance(req: UtteranceCreateRequest) -> Dict[str, Any]:
-    """Push a real-time or simulated utterance into the active buffer and broadcast to HUD."""
+    """Push a real-time or simulated utterance through the `utterance.before_save` filter pipeline into the buffer."""
     utt = Utterance(
         text_content=req.text_content,
         speaker_role=req.speaker_role,
@@ -75,9 +75,13 @@ async def push_utterance(req: UtteranceCreateRequest) -> Dict[str, Any]:
         duration_ms=req.duration_ms,
         device_id=req.device_id,
     )
-    get_storage().insert_utterance(utt)
-    await event_bus.publish("utterance.created", utt.model_dump())
-    return {"status": "buffered", "utterance": utt.model_dump()}
+    filtered = await event_bus.apply_filters("utterance.before_save", utt)
+    if filtered is None:
+        return {"status": "dropped_by_filter", "utterance": None}
+
+    get_storage().insert_utterance(filtered)
+    await event_bus.publish("utterance.created", filtered.model_dump())
+    return {"status": "buffered", "utterance": filtered.model_dump()}
 
 
 @router.get("/utterances/buffer")

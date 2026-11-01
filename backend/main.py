@@ -2,9 +2,10 @@
 
 Mounts:
 - Interactive Web PWA & Smart Glasses HUD Simulator (`/`)
-- REST APIs (`/api/v1/episodes`, `/api/v1/actions`, `/api/v1/clues`, `/api/v1/facts`, `/api/v1/memos`, `/api/v1/voiceprint`, `/api/v1/plugins`)
+- REST APIs (`/api/v1/episodes`, `/api/v1/actions`, `/api/v1/clues`, `/api/v1/facts`, `/api/v1/memos`, `/api/v1/voiceprint`, `/api/v1/plugins`, `/api/v1/system/kernel`)
+- Custom Plugin Extension Routers (`/api/v1/ext/{plugin_name}/*`)
 - Hardware-Agnostic WebSocket Audio & HUD Stream (`/api/v1/stream/audio`)
-- Dynamic Plugin Discovery (`plugins/`) & Built-in Connectors (Obsidian Sync & Webhook)
+- Autonomous RuntimeManager (`Passes` loop, Durable `Effects` queue, `HealthBoard`)
 - Demo Scenario Seeder (`/api/v1/demo/seed`) for instant out-of-the-box evaluation
 """
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from fastapi.responses import HTMLResponse
 from backend.api import routes_actions, routes_episodes, routes_facts, routes_voiceprint
 from backend.config import settings
 from backend.core.plugin_manager import plugin_manager
+from backend.core.runtime import runtime_manager
 from backend.ingest.ws_stream import get_stream_gateway
 from backend.memory_core.proactive_cron import get_memo_generator
 from backend.memory_core.segmenter import get_segmenter
@@ -23,28 +25,41 @@ from backend.storage.database import get_storage
 from backend.storage.models import Utterance
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    get_storage()
+def _bootstrap_plugins_and_connectors(target_app: FastAPI) -> None:
+    """Discover local/entry_point plugins, mount custom plugin routers, and bind built-in connectors."""
     plugin_manager.discover_and_load()
+    plugin_manager.mount_plugin_routers(target_app)
     try:
         from backend.connectors.obsidian_sync import register_obsidian_connector
         from backend.connectors.webhook_notifier import register_webhook_connector
 
-        register_obsidian_connector()
-        register_webhook_connector()
+        obs = register_obsidian_connector()
+        wh = register_webhook_connector()
+        runtime_manager.register_effect_handler("obsidian_sync_episode", obs.on_episode_closed)
+        runtime_manager.register_effect_handler("obsidian_sync_memo", obs.on_memo_generated)
+        runtime_manager.register_effect_handler("webhook_notify", wh.on_memo_generated)
     except ImportError:
         pass
-    yield
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    get_storage()
+    _bootstrap_plugins_and_connectors(app)
+    await runtime_manager.start()
+    try:
+        yield
+    finally:
+        await runtime_manager.stop()
 
 
 app = FastAPI(
-    title="EchoMind — Open-Source Personal 2nd Brain & Wearable Memory Hub",
+    title="EchoMind — Open-Source Personal 2nd Brain & Wearable Memory Micro-Kernel",
     description=(
-        "100% Local CPU-First Memory Backend inspired by MemoMind (极米记得), "
-        "Omi, Plaud Note, Screenpipe, and Mem0."
+        "100% Local CPU-First Extensible Memory Micro-Kernel inspired by MemoMind (极米记得), "
+        "Omi, Plaud Note, Screenpipe, Mem0, and dsh-superagent."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -61,6 +76,9 @@ app.include_router(routes_actions.router)
 app.include_router(routes_facts.router)
 app.include_router(routes_voiceprint.router)
 
+# Discover plugins and mount custom `/api/v1/ext/{plugin_name}` routers eagerly
+_bootstrap_plugins_and_connectors(app)
+
 
 @app.get("/", response_class=HTMLResponse)
 def serve_web_pwa() -> HTMLResponse:
@@ -76,8 +94,9 @@ def health_check() -> Dict[str, Any]:
     return {
         "status": "ok",
         "app": settings.app_name,
-        "version": "0.1.0",
+        "version": "0.2.0",
         "plugins_loaded": len(plugin_manager.list_plugins()),
+        "health_summary": runtime_manager.board.get_summary(),
     }
 
 

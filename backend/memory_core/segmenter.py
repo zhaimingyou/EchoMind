@@ -1,17 +1,18 @@
-"""Dynamic Episode Segmenter State Machine with Sliding Overlap & Host-Absence Filter.
+"""Dynamic Episode Segmenter State Machine with Sliding Overlap, Host-Absence Filter, and Filter Hooks.
 
-Implements the 3 core segmentation triggers from `specs/design.md`:
+Implements:
 - Condition A (Physical Silence): > 180s since last utterance -> close & extract
 - Condition B (Max Span + Sliding Overlap): >= 25 min continuous conversation -> force split & copy last 5 utterances as `is_context_prefix=True`
 - Condition C (Host Absence Filter): 0% HOST word ratio (and not bystander mode) -> mark `DISCARDED` with zero LLM token consumption
+- Micro-kernel Filter Hooks: `episode.before_extract` and `episode.before_save`
 """
 from datetime import datetime, timezone
 import logging
 from typing import List, Optional
-from backend.audio_engine.speaker_id import get_speaker_identifier
 from backend.config import settings
 from backend.core.event_bus import event_bus
-from backend.memory_core.extractor import CognitiveExtractor, get_extractor
+from backend.core.interfaces import ExtractorProvider
+from backend.core.registry import registry
 from backend.memory_core.fact_resolver import FactResolver, get_fact_resolver
 from backend.storage.database import StorageEngine, get_storage
 from backend.storage.models import ActionItem, ClueAndWishlist, Episode, Utterance
@@ -36,14 +37,20 @@ class EpisodeSegmenter:
     def __init__(
         self,
         storage: Optional[StorageEngine] = None,
-        extractor: Optional[CognitiveExtractor] = None,
+        extractor: Optional[ExtractorProvider] = None,
         fact_resolver: Optional[FactResolver] = None,
         hybrid_search: Optional[HybridSearchEngine] = None,
     ) -> None:
         self.storage = storage or get_storage()
-        self.extractor = extractor or get_extractor()
+        self._extractor = extractor
         self.fact_resolver = fact_resolver or get_fact_resolver()
         self.hybrid_search = hybrid_search or get_hybrid_search()
+
+    @property
+    def extractor(self) -> ExtractorProvider:
+        if self._extractor is not None:
+            return self._extractor
+        return registry.get_extractor()
 
     async def inspect_and_segment(
         self,
@@ -80,7 +87,7 @@ class EpisodeSegmenter:
         unassigned: List[Utterance],
         real_utterances: List[Utterance],
         retain_overlap: bool = False,
-    ) -> Episode:
+    ) -> Optional[Episode]:
         total_chars = sum(len(u.text_content) for u in real_utterances)
         host_chars = sum(len(u.text_content) for u in real_utterances if u.speaker_role == "HOST")
         host_ratio = round(host_chars / max(total_chars, 1), 4)
@@ -102,13 +109,25 @@ class EpisodeSegmenter:
             )
             self.storage.insert_episode(discarded_ep)
             self.storage.assign_utterances_to_episode(all_ids, discarded_ep.id)
-            get_speaker_identifier().reset_guest_pool()
+            registry.get_speaker().reset_guest_pool()
             logger.info("Discarded background episode %s (host_word_ratio=0.0)", discarded_ep.id)
             return discarded_ep
 
-        # Extract cognitive summary, action items, wishlists/clues, and semantic facts
-        cog = await self.extractor.extract_episode(unassigned)
+        # Filter Stage 1: Allow plugins to inspect/modify utterances before extraction
+        filtered_utterances = await event_bus.apply_filters("episode.before_extract", list(unassigned))
+        if not filtered_utterances:
+            filtered_utterances = list(unassigned)
 
+        # Extract cognitive summary, action items, wishlists/clues, and semantic facts
+        cog = await self.extractor.extract_episode(filtered_utterances)
+
+        # Filter Stage 2: Allow plugins to enrich `EpisodeCognitiveResult` (e.g., inject `custom_metadata` or todos)
+        cog = await event_bus.apply_filters("episode.before_save", cog)
+        if cog is None:
+            logger.info("Episode intercepted and dropped by 'episode.before_save' filter.")
+            return None
+
+        ep_metadata = dict(getattr(cog, "custom_metadata", {}) or {})
         ep = Episode(
             start_time=start_time,
             end_time=end_time,
@@ -118,6 +137,7 @@ class EpisodeSegmenter:
             importance_score=cog.importance_score,
             host_word_ratio=host_ratio,
             is_vectorized=True,
+            metadata_json=ep_metadata,
         )
         concat_text = " ".join(u.text_content for u in real_utterances)
         self.storage.insert_episode(ep, utterances_concat=concat_text)
@@ -175,7 +195,7 @@ class EpisodeSegmenter:
                 )
                 self.storage.insert_utterance(prefix_copy)
         else:
-            get_speaker_identifier().reset_guest_pool()
+            registry.get_speaker().reset_guest_pool()
 
         # Publish `episode.closed` event to EventBus for plugins, HUDs, and Obsidian Sync
         await event_bus.publish(

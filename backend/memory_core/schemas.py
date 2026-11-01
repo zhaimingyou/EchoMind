@@ -38,7 +38,11 @@ class FactOperationExtract:
 
 @dataclass
 class EpisodeCognitiveResult:
-    """Complete structured cognitive output for a closed Episode."""
+    """Complete structured cognitive output for a closed Episode.
+
+    Includes `custom_metadata` so vertical domain extractors or `@filter_hook("episode.before_save")`
+    plugins can attach arbitrary structured domain fields that persist into `Episode.metadata_json`.
+    """
 
     title: str
     summary_markdown: str
@@ -48,6 +52,7 @@ class EpisodeCognitiveResult:
     action_items: List[ActionItemExtract] = field(default_factory=list)
     clues_and_wishlists: List[ClueAndWishlistExtract] = field(default_factory=list)
     fact_operations: List[FactOperationExtract] = field(default_factory=list)
+    custom_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def model_dump(self) -> Dict[str, Any]:
         return asdict(self)
@@ -64,4 +69,5 @@ class EpisodeCognitiveResult:
             action_items=[ActionItemExtract(**a) for a in data.get("action_items", [])],
             clues_and_wishlists=[ClueAndWishlistExtract(**c) for c in data.get("clues_and_wishlists", [])],
             fact_operations=[FactOperationExtract(**f) for f in data.get("fact_operations", [])],
+            custom_metadata=dict(data.get("custom_metadata", {})),
         )
